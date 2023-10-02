@@ -1,0 +1,3 @@
+[submodule "CrossStudyCompletion"]
+	path = CrossStudyCompletion
+	url = git@github.com:TalEinav/CrossStudyCompletion.git
