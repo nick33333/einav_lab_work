@@ -256,8 +256,8 @@ def worst_case_error(RMSE, odr_model, fitted_params, use_MSE=False):
             odr_value = odr_model(fitted_params, RMSE[idx])
             odr_values.append(odr_value)
             output_w_MSE.append(max(RMSE[idx], odr_value+f_RMSE))
-        return output_w_MSE
-    return output
+        return output_w_MSE, f_RMSE
+    return output, f_RMSE
 
 def convert_raw_dtr_predictions(data, dtr_list):
     '''
@@ -505,7 +505,7 @@ class transferability_comparisons():
         table_names = list(self.HI_data_tables.antisera_table['groupID'].unique())
         table_list = [self.HI_data_tables.select_HI_data_by_group(group=i, sort_by_year=True) for i in table_names]
         nrows, ncols = len(table_names), len(table_names)
-        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(200, 200))
+        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(100, 100))
 
         for idx, source_table in enumerate(table_list):
             source_table_name = table_names[idx]
@@ -518,7 +518,7 @@ class transferability_comparisons():
                     x = self.intra_RMSE_dict[comparison_name]
                     y = self.cross_RMSE_dict[comparison_name]
 
-                    axs[idx, jdx].scatter(x,y,  s=100, **kwargs)
+                    axs[idx, jdx].scatter(x,y, **kwargs)
                     axs[idx, jdx].set_title(comparison_name, fontsize = 30)
                     axs[0,0].set_ylabel("Cross Table RMSE", fontsize = 30)
                     axs[idx, jdx].tick_params(axis='both', which='major', labelsize=20)
@@ -577,7 +577,7 @@ class transferability_comparisons():
                 # Construct dataframe with sigma_training, sigma_actual, and worst case error predicted from ODR
                 df['sigma_training'] = sigma_training_list
                 df['sigma_actual'] = sigma_actual_list
-                df['worst_case_error'] = worst_case_error(sigma_training_list, odr_model, fitted_params)
+                df['worst_case_error'] = worst_case_error(sigma_training_list, odr_model, fitted_params, False)[0]
                 virus_ODR_df_dict[v_j_i] = (df, odr_model, fitted_params) # Might not need odr_model function as an arg if I make it a global function
             comparison_virus_ODR_df_dict[comparison_name] = virus_ODR_df_dict
             
@@ -618,7 +618,7 @@ class transferability_comparisons():
                 # Find error for each HAI prediction using ODR
                 sigma_training_list = [i[1] for i in dtr_lists_list] # See Box 1 section 2 for reasoning
                 mean_sigma_training = sum(sigma_training_list)/len(sigma_training_list) # Take mean
-                error_predict = worst_case_error(RMSE = [mean_sigma_training], odr_model = odr_model, fitted_params = fitted_params) # Find worst case error
+                error_predict = worst_case_error(RMSE = [mean_sigma_training], odr_model = odr_model, fitted_params = fitted_params,use_MSE=False)[0] # Find worst case error
                 error_actual = 10**np.sqrt(np.nanmean((np.log10(HAI_measurements.flatten()) - np.log10(mu.to_numpy()))**2))
                 # Error bar data (Warning: Only valid for viruses with HAI measurements)
                 x = np.log10(HAI_measurements.tolist()[0])
@@ -636,7 +636,7 @@ class transferability_comparisons():
         table_names = list(self.HI_data_tables.antisera_table['groupID'].unique())
         table_list = [self.HI_data_tables.select_HI_data_by_group(group=i, sort_by_year=True) for i in table_names]
         nrows, ncols = len(table_names), len(table_names)
-        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(200, 200))
+        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(100, 100))
 
         for idx, source_table in enumerate(table_list):
             source_table_name = table_names[idx]
@@ -652,10 +652,10 @@ class transferability_comparisons():
                     fitted_params = self.comparison_ODR_df_dict[comparison_name][-1]
                     odr_model = self.comparison_ODR_df_dict[comparison_name][-2]
                     x_values = np.linspace(0, 1, 100)
-                    y_values = worst_case_error(x_values, odr_model, fitted_params)
+                    y_values, f_RMSE = worst_case_error(x_values, odr_model, fitted_params, False)
                     axs[idx, jdx].plot(x_values, y_values, label=f"ODR Model", color='red')
                     
-                    axs[idx, jdx].scatter(x,y,  s=100, **kwargs)
+                    axs[idx, jdx].scatter(x,y, **kwargs)
                     axs[idx, jdx].set_title(comparison_name, fontsize = 30)
                     axs[0,0].set_ylabel("Cross Table RMSE", fontsize = 30)
                     axs[idx, jdx].tick_params(axis='both', which='major', labelsize=20)
@@ -664,8 +664,9 @@ class transferability_comparisons():
                                        label="Diagonal Line (y = x)", linestyle='dashed',
                                        color='green')
                     slope = fitted_params[0]
-                    transferability = 1/slope
-                    axs[idx, jdx].text(0.95, 0.05, f'{transferability:.2f}',
+                    intercept = fitted_params[1]
+                    transferability = 1/(slope+f_RMSE)
+                    axs[idx, jdx].text(0.95, 0.05, f'slope: {slope}\nintercept: {intercept}\nf_RMSE: {f_RMSE}\ntransferability: {transferability:.2f}',
                                        fontsize=30, color='red', ha='right', va='bottom')
                     axs[idx, jdx].set_xlim([0, 1])
                     axs[idx, jdx].set_ylim([0, 1])
@@ -685,7 +686,7 @@ class transferability_comparisons():
         fitted_params = ODR_df_dict[-1]
         # Use ODR model to retrieve worst case errors
         x_values = np.linspace(0, 1, 100)
-        y_values = worst_case_error(x_values, odr_model, fitted_params)
+        y_values = worst_case_error(x_values, odr_model, fitted_params, use_MSE=False)[0]
         # Retrieve simga_training and sigma_acutal relevant to virus
         x_data = ODR_df_dict[0]['sigma_training']
         y_data =  ODR_df_dict[0]['sigma_actual']
