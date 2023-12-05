@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.impute import SimpleImputer
+
 import seaborn as sns
 import matplotlib.pyplot as plt
 import sklearn
@@ -131,23 +134,50 @@ def train_tree(target_table: "pd.DataFrame",
         col_mean_t = data_train.apply(lambda x: x.mean(), axis=1) # Prepare to mean center the training data
         data_train = data_train - np.outer(np.ones(data_train.shape[1]), col_mean_t).T # Mean center the training data
         data_train.columns = np.append(virus_col_sel, "target")
+
+        # Decision Tree Regression (UNCOMMENT)
         dtr = DecisionTreeRegressor(min_samples_split=5)
         # print(data_train)
-        dtr.fit(data_train.iloc[:, :-1], data_train["target"]) # Train on selected viruses and sera, evaluate with target virus
+        dtr.fit(data_train.iloc[:, :-1], data_train["target"])  # Train on selected viruses and sera, evaluate with target virus
+        
+        # Linear Regression Model Baseline (COMMENT)
+        # dtr = LinearRegression()
+        # imputer = SimpleImputer(strategy='mean')
+        # imputed_training_data = imputer.fit_transform(data_train.iloc[:, :-1])
+        # dtr.fit(imputed_training_data, data_train["target"]) # Train on selected viruses and sera, evaluate with target virus
+        # END LINEAR REGRESSION BASELINE
+        
         # Compile validation dataset, really performing a single cross validation (evaluate on data complementary to training data)
         data_test = data_assist_train.drop([data_assist_train.index[idx] for idx in sera_row_sel], axis=0)[np.append(virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
+
+        # Decision Tree Regression  (UNCOMMENT)
         col_mean_t = data_test.apply(lambda x: x.mean(), axis=1)
         data_test = data_test - np.outer(np.ones(data_test.shape[1]), col_mean_t).T
         pred_t = dtr.predict(data_test.iloc[:, :-1]) # Make prediction on target using unforeseen data
+        
+        # Linear Regression Model Baseline (COMMENT)
+        # imputer = SimpleImputer(strategy='mean')
+        # imputed_data_test = imputer.fit_transform(data_test.iloc[:, :-1])
+        # pred_t = dtr.predict(imputed_data_test)  # Make prediction on target using unforeseen data
+        # END LINEAR REGRESSION BASELINE
+        
         RMSE = np.sqrt(np.mean((pred_t - data_test[feature_t]) ** 2))
 
         # Compile testing dataset using data_t for cross-table RMSC
         cross_virus_col_sel = virus_col_sel # Viruses we specifically want to train on and use for predictions in predicting data
         cross_sera_row_sel = np.random.choice(data_t.shape[0], int(data_t.shape[0] * f_sample), replace=True) # Randomly selected sera        data_test = data_assist_train.drop([data_assist_train.index[idx] for idx in sera_row_sel], axis=0)[np.append(virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
         cross_data_test = data_t[np.append(cross_virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
+        
+        # Decision Tree Regression  (UNCOMMENT)
         cross_col_mean_t = cross_data_test.apply(lambda x: x.mean(), axis=1)
         cross_data_test = cross_data_test - np.outer(np.ones(cross_data_test.shape[1]), cross_col_mean_t).T
-        cross_pred_t = dtr.predict(cross_data_test.iloc[:, :-1]) # Make prediction on target using unforeseen data
+        cross_pred_t = dtr.predict(cross_data_test.iloc[:, :-1])  # Make prediction on target using unforeseen data
+        
+        # Linear Regression Model Baseline (COMMENT)
+        # imputer = SimpleImputer(strategy='mean')
+        # imputed_cross_data_test = imputer.fit_transform(cross_data_test.iloc[:, :-1])
+        # cross_pred_t = dtr.predict(imputed_cross_data_test)  # Make prediction on target using unforeseen data
+        # END LINEAR REGRESSION BASELINE
 
         # OKOKOK, we can only find cross_RMSE if target table actually contains target feature...
         cross_RMSE = np.sqrt(np.mean((cross_pred_t - cross_data_test[feature_t]) ** 2)) 
@@ -222,48 +252,53 @@ def odr_model(params, x):
 
 
 def find_odr_fitted_params(x_data, y_data, odr_model):
-    # Find ODR or perpendicularly fit line on current set of points
+    '''
+    Finds ODR or perpendicularly fit line on current set of points
+    '''
     data = RealData(x_data, y_data)
     model = Model(odr_model)
     initial_guess = [1.0, 1.0]  # Initial guess for the parameters
     odr = ODR(data, model, beta0=initial_guess)
     result = odr.run()
     fitted_params = result.beta # Slope and bias parameters for ODR
-    return fitted_params
+    
+    # In addition to finding the perpendicularly fit line of intra and
+    # cross RMSEs, we compute f_RMSE or "the RMSE of the vertical
+    # deviations between f⟂ and each point"
+    fitted_x_data = np.array(x_data) * fitted_params[0] + fitted_params[1]
+    if len(x_data) >0:
+        f_RMSE = np.sqrt(sum((fitted_x_data - np.array(y_data))**2)/len(fitted_x_data))
+    else:
+        # print(len(x_data), len(y_data))
+        f_RMSE = 0
+    # print(f_RMSE)
+    
+    return fitted_params, f_RMSE
 
-def worst_case_error(RMSE, odr_model, fitted_params, use_MSE=False):
+def worst_case_error(RMSE, odr_model, fitted_params, f_RMSE=0):
     '''
-    Function takes in RMSE, odr model, and trained/fitted parameters.
+    Function takes in intra-RMSE, odr model, and trained/fitted parameters.
     Function then returns the max between the RMSE and the error predicted
     from inputting RMSE into the trained odr model.
     
-    Assume that RMSE is a list or array
+    Optional is f_RMSE (see Figure S1 description) which adds a bias to the
+    perpendicularly fit line that aids in computing the model's
+    transferability.
     '''
     # print(len(RMSE))
-    
     output = []
-    output_w_MSE = []
-    odr_values = []
     if len(RMSE) == 0:
         return output
     for idx in range(len(RMSE)):
-        odr_value = odr_model(fitted_params, RMSE[idx])
-        odr_values.append(odr_value)
+        odr_value = odr_model(fitted_params, RMSE[idx]) + f_RMSE
         output.append(max(RMSE[idx], odr_value))
-    f_RMSE = mean_squared_error(odr_values, RMSE)**0.5
-    if use_MSE:
-        for idx in range(len(RMSE)):
-            odr_value = odr_model(fitted_params, RMSE[idx])
-            odr_values.append(odr_value)
-            output_w_MSE.append(max(RMSE[idx], odr_value+f_RMSE))
-        return output_w_MSE, f_RMSE
-    return output, f_RMSE
+    return output
 
 def convert_raw_dtr_predictions(data, dtr_list):
     '''
     Input for trained decision trees must be log10 transformed
     and mean centered HAI values corresponding to the {n_feautes}
-    virus featues which the decision tree was trained on. 
+    virus featues which the decision tree was trained on.
     
     Data should be the table which a prediction will be made from.
     
@@ -271,20 +306,20 @@ def convert_raw_dtr_predictions(data, dtr_list):
     and log10 transformed. Due to this, in order to retrieve actual
     HAI values, these transformations must be reversed.
     '''
-    dtr = dtr_list[0]
-    col_select = dtr_list[3].tolist() # np.random.choice(df.columns, 5)
-    target = dtr_list[4]
+    dtr = dtr_list[0]  # Model
+    col_select = dtr_list[3].tolist()  # List of viruses which model trained on. Computed with: np.random.choice(df.columns, 5)
+    target = dtr_list[4]  # Name of model's target virus
     col_select.append(target)
-    data_select_target = data[col_select] # Might not need to drop NANs
-    data_select = data_select_target.iloc[:,:-1]
+    data_select_and_target = data[col_select]  # Might not need to drop NANs
+    data_select = data_select_and_target.iloc[:,:-1]
 #     print(data_select)
     col_mean_t = data_select.apply(lambda x: x.mean(), axis=1)
     data_select = data_select - np.outer(np.ones(data_select.shape[1]), col_mean_t).T
     pred_t = dtr.predict(data_select.to_numpy()) # Make prediction on target using unforeseen data
     pred_t_uncentered = pred_t + col_mean_t
 
-    HAI_predictions = 10**(pred_t_uncentered)
-    HAI_measurements = 10**data_select_target[target]
+    HAI_predictions = 10**(pred_t_uncentered) 
+    HAI_measurements = 10**data_select_and_target[target]  # HAI measurements of viruses which model trained on and is targetting (last virus column)
 #     print(HAI_measurements)
     return HAI_predictions.to_numpy().reshape(1, -1), HAI_measurements.to_numpy().reshape(1, -1), pred_t
 
@@ -294,10 +329,10 @@ def average_convert_raw_dtr_predictions(data, dtr_lists_list):
         HAI_predictions, HAI_measurements, raw_predictions = convert_raw_dtr_predictions(data=data, dtr_list=dtr_list)
         HAI_predictions_list.append(HAI_predictions)
     
-    HAI_predictions_df = pd.DataFrame()
+    HAI_predictions_df = pd.DataFrame() # Contains all predictions
     for idx, i in enumerate(HAI_predictions_list):
         HAI_predictions_df[idx] = i.tolist()[0]
-    mu = HAI_predictions_df.mean(axis=1)
+    mu = HAI_predictions_df.mean(axis=1) # Mean of predictions on virus from each model
     return mu, HAI_measurements, HAI_predictions_df, raw_predictions
 
 def combine_predictions(target_virus_name,
@@ -380,7 +415,19 @@ class HI_data_tables():
         '''
         Given name of data group, return corresponding HI_data entries as dataframe
         '''
-        indices = [i in group for i in self.antisera_table['groupID'].to_numpy()]
+        try:
+            assert isinstance(group, list)
+        except AssertionError:
+            print("Error: 'group' should be a list.")
+        # FIX THIS: "TableS1" is technically "in" "TableS13"
+        group_bools = []
+        for g in group:
+            group_bools.append((g == self.antisera_table['groupID']).to_list())
+        indices = group_bools[0]
+        for l in group_bools[1:]:
+            indices = [a or b for a, b in zip(indices, l)]
+            
+        # indices = [i in group for i in self.antisera_table['groupID'].to_numpy()] 
         selected_df = self.HI_data.iloc[indices]
         if sort_by_year:
             virusID_sorted_by_year = self.virus_table.sort_values(by='Year').virusID.tolist()
@@ -439,10 +486,11 @@ class transferability_comparisons():
             # self.comparison_dict, self.intra_RMSE_dict, self.cross_RMSE_dict, self.comparison_virus_ODR_df_dict = pickle.load(file)
 
 
-    def train_comparison_trees(self, train_trees=1, best_trees=1, verbose=False):
+    def train_comparison_trees(self, train_trees=1, best_trees=1, verbose=False, **kwargs):
         
         table_names = list(self.HI_data_tables.antisera_table['groupID'].unique())
-        table_list = [self.HI_data_tables.select_HI_data_by_group(group=i, sort_by_year=True) for i in table_names]
+        assert isinstance(table_names, list) and isinstance(table_names[0], str)
+        table_list = [self.HI_data_tables.select_HI_data_by_group(group=[i], sort_by_year=True) for i in table_names]
         comparison_dict = dict()
         for idx, source_table in enumerate(table_list):
             source_table_name = table_names[idx]
@@ -461,8 +509,6 @@ class transferability_comparisons():
                                                                 source_tables = [source_table],
                                                                 feature_t = feature_target,
                                                                 selected_viruses_list = False,
-                                                                n_feature = 5,
-                                                                f_sample=0.3,
                                                                 train_trees=train_trees,
                                                                 best_trees=best_trees,
                                                                 k=1,
@@ -571,24 +617,23 @@ class transferability_comparisons():
                                 sigma_actual_list.append(sigma_actual)
 
                 # Find ODR or perpendicularly fit line on current set of points
-                fitted_params = find_odr_fitted_params(x_data=sigma_training_list, 
+                fitted_params, f_RMSE = find_odr_fitted_params(x_data=sigma_training_list, 
                                                     y_data=sigma_actual_list,
                                                     odr_model=odr_model)
                 # Construct dataframe with sigma_training, sigma_actual, and worst case error predicted from ODR
                 df['sigma_training'] = sigma_training_list
                 df['sigma_actual'] = sigma_actual_list
-                df['worst_case_error'] = worst_case_error(sigma_training_list, odr_model, fitted_params, False)[0]
-                virus_ODR_df_dict[v_j_i] = (df, odr_model, fitted_params) # Might not need odr_model function as an arg if I make it a global function
+                df['worst_case_error'] = worst_case_error(sigma_training_list, odr_model, fitted_params, f_RMSE)
+                virus_ODR_df_dict[v_j_i] = (df, odr_model, fitted_params, f_RMSE) # Might not need odr_model function as an arg if I make it a global function
             comparison_virus_ODR_df_dict[comparison_name] = virus_ODR_df_dict
-            
+            # Below code computes ODR for all of a comparison's data (Different than the ODR computed for each virus of the comparison)
             x_data = self.intra_RMSE_dict[comparison_name]
             y_data = self.cross_RMSE_dict[comparison_name]
-            fitted_params = find_odr_fitted_params(x_data=x_data, 
+            fitted_params, f_RMSE = find_odr_fitted_params(x_data=x_data, 
                                                 y_data=y_data,
                                                 odr_model=odr_model)
-            comparison_ODR_df_dict[comparison_name] = (x_data, y_data, odr_model, fitted_params)
+            comparison_ODR_df_dict[comparison_name] = (x_data, y_data, odr_model, fitted_params, f_RMSE)
 
-            
         self.comparison_ODR_df_dict = comparison_ODR_df_dict
         self.comparison_virus_ODR_df_dict = comparison_virus_ODR_df_dict
 
@@ -604,7 +649,7 @@ class transferability_comparisons():
             - Still might wanna index for clarity's sake
         '''
 
-        comparison_combiner_dict = dict() # This dict is needed for combining Box 1 part 3
+        comparison_combiner_dict = dict()  # This dict is needed for combining Box 1 part 3
 
         for comparison_idx, comparison_name in enumerate(list(self.comparison_dict.keys())): # Choose comparison
             comparison_combiner_dict[comparison_name] = dict()
@@ -612,13 +657,16 @@ class transferability_comparisons():
             for virus_idx, virus_name in enumerate(list(self.comparison_dict[comparison_name].keys())): # Choose target virus in comparison
                 data = self.HI_data_tables.select_HI_data_by_group(group=target_table)
                 # Retrieve decision tree, ODR model, and predictions
-                dtr_lists_list = self.comparison_dict[comparison_name][virus_name] # Retrieve decision tree data
-                df, odr_model, fitted_params = self.comparison_virus_ODR_df_dict[comparison_name][virus_name] # Retrieve ODR
-                mu, HAI_measurements, HAI_predictions_df, raw_predictions = average_convert_raw_dtr_predictions(data, dtr_lists_list) # Find AVG HAI preds and measurements        
+                dtr_lists_list = self.comparison_dict[comparison_name][virus_name] # Retrieve virus's decision tree data
+                df, odr_model, fitted_params, f_RMSE = self.comparison_virus_ODR_df_dict[comparison_name][virus_name] # Retrieve virus's ODR (perpendicularly fit line model)
+                mu, HAI_measurements, HAI_predictions_df, raw_predictions = average_convert_raw_dtr_predictions(data, dtr_lists_list) # Find virus's AVG HAI preds and measurements      
                 # Find error for each HAI prediction using ODR
                 sigma_training_list = [i[1] for i in dtr_lists_list] # See Box 1 section 2 for reasoning
-                mean_sigma_training = sum(sigma_training_list)/len(sigma_training_list) # Take mean
-                error_predict = worst_case_error(RMSE = [mean_sigma_training], odr_model = odr_model, fitted_params = fitted_params,use_MSE=False)[0] # Find worst case error
+                mean_sigma_training = sum(sigma_training_list)/len(sigma_training_list) # Take mean of predictions made from each regression model trained on virus
+                
+                # since I am finding the worst case error for a prediction, I should adjust the fitted params (slope, intercept) for the virus's ODR to include the addition of RMSE
+                # between intra-RMSE and cross-RMSE to the original intercept. I SHOULD ADD f_RMSE TO fitted_params INTERCEPT
+                error_predict = worst_case_error(RMSE = [mean_sigma_training], odr_model = odr_model, fitted_params = fitted_params, f_RMSE=f_RMSE)  # Find worst case error
                 error_actual = 10**np.sqrt(np.nanmean((np.log10(HAI_measurements.flatten()) - np.log10(mu.to_numpy()))**2))
                 # Error bar data (Warning: Only valid for viruses with HAI measurements)
                 x = np.log10(HAI_measurements.tolist()[0])
@@ -634,7 +682,7 @@ class transferability_comparisons():
 
     def plot_comparisons_with_ODRs(self, save_to=None, **kwargs):
         table_names = list(self.HI_data_tables.antisera_table['groupID'].unique())
-        table_list = [self.HI_data_tables.select_HI_data_by_group(group=i, sort_by_year=True) for i in table_names]
+        table_list = [self.HI_data_tables.select_HI_data_by_group(group=[i], sort_by_year=True) for i in table_names]
         nrows, ncols = len(table_names), len(table_names)
         fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(100, 100))
 
@@ -649,10 +697,9 @@ class transferability_comparisons():
                     x = self.intra_RMSE_dict[comparison_name]
                     y = self.cross_RMSE_dict[comparison_name]
                     # Worst case error computed from ODR trained on comparison
-                    fitted_params = self.comparison_ODR_df_dict[comparison_name][-1]
-                    odr_model = self.comparison_ODR_df_dict[comparison_name][-2]
+                    x_data, y_data, odr_model, fitted_params, f_RMSE = self.comparison_ODR_df_dict[comparison_name]
                     x_values = np.linspace(0, 1, 100)
-                    y_values, f_RMSE = worst_case_error(x_values, odr_model, fitted_params, False)
+                    y_values = worst_case_error(x_values, odr_model, fitted_params, f_RMSE=f_RMSE)
                     axs[idx, jdx].plot(x_values, y_values, label=f"ODR Model", color='red')
                     
                     axs[idx, jdx].scatter(x,y, **kwargs)
@@ -681,15 +728,16 @@ class transferability_comparisons():
         '''
         Function plots out ODR line trained on datapoints relevant to a target virus's tree RMSE values
         '''
-        ODR_df_dict = self.comparison_virus_ODR_df_dict[comparison_name][sample_name]
-        odr_model = ODR_df_dict[1]
-        fitted_params = ODR_df_dict[-1]
+        df, odr_model, fitted_params, f_RMSE = self.comparison_virus_ODR_df_dict[comparison_name][sample_name]
+        # odr_model = ODR_df_dict[1]
+        # fitted_params = ODR_df_dict[-1]
+        # Retrieve simga_training and sigma_acutal relevant to virus
+        x_data = df['sigma_training']
+        y_data =  df['sigma_actual']
         # Use ODR model to retrieve worst case errors
         x_values = np.linspace(0, 1, 100)
-        y_values = worst_case_error(x_values, odr_model, fitted_params, use_MSE=False)[0]
-        # Retrieve simga_training and sigma_acutal relevant to virus
-        x_data = ODR_df_dict[0]['sigma_training']
-        y_data =  ODR_df_dict[0]['sigma_actual']
+        y_values = worst_case_error(x_values, odr_model, fitted_params, f_RMSE=f_RMSE)
+
         print(y_values)
         print()
         # Plot data points
