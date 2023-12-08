@@ -79,6 +79,7 @@ def train_tree(target_table: "pd.DataFrame",
     '''
 #     print(comparison_name)
     tree_dict = dict() # Will contain trained tree, cross-validation RMSE, and (truth, predictions) for cross validation 
+    assert(isinstance(source_tables, list))
     for idx, train_table in enumerate(source_tables):
         # Renaming testing data (data_t) and training data (data_assist_train)
         data_t = target_table # (1) Data that we want to make prediction on 
@@ -121,8 +122,9 @@ def train_tree(target_table: "pd.DataFrame",
     #         print(f"{feature_t} not in data_t")
             return
         # Training step (and single cross validation):
-        if selected_viruses_list: # If selected_viruses_list is not False, I'm assuming its just a list of virus names
-            virus_col_sel = np.array(selected_viruses_list) # Viruses we specifically want to train on and use for predictions in predicting data
+
+        if not isinstance(selected_viruses_list,bool): # If selected_viruses_list is not False, I'm assuming its just a list of virus names
+            virus_col_sel = selected_viruses_list # Viruses we specifically want to train on and use for predictions in predicting data
         else:
             features_list = list(data_assist_train.columns) # Make sure feature_t isn't in features to train on
             features_list.remove(feature_t)
@@ -130,11 +132,13 @@ def train_tree(target_table: "pd.DataFrame",
 
         sera_row_sel = np.random.choice(data_assist_train.shape[0], int(data_assist_train.shape[0] * f_sample), replace=True) # Randomly selected sera
         # We want to include the column of f_t_ind into our data_train
+        # print('before train')
         data_train = data_assist_train.iloc[sera_row_sel][np.append(virus_col_sel, feature_t)] # Training data subset covering virus_col_sel viruses and sera_row_sel sera
+        # print('after train')
         col_mean_t = data_train.apply(lambda x: x.mean(), axis=1) # Prepare to mean center the training data
         data_train = data_train - np.outer(np.ones(data_train.shape[1]), col_mean_t).T # Mean center the training data
         data_train.columns = np.append(virus_col_sel, "target")
-
+        
         # Decision Tree Regression (UNCOMMENT)
         dtr = DecisionTreeRegressor(min_samples_split=5)
         # print(data_train)
@@ -153,21 +157,36 @@ def train_tree(target_table: "pd.DataFrame",
         # Decision Tree Regression  (UNCOMMENT)
         col_mean_t = data_test.apply(lambda x: x.mean(), axis=1)
         data_test = data_test - np.outer(np.ones(data_test.shape[1]), col_mean_t).T
-        pred_t = dtr.predict(data_test.iloc[:, :-1]) # Make prediction on target using unforeseen data
+        # print(data_test.shape)
+        # data_test = data_test.T.drop_duplicates().T # Drop duplicate columns
+        # print(data_test.shape)
+        
+        pred_t = dtr.predict(data_test.iloc[:, :-1])  # Make prediction on target using unforeseen data
         
         # Linear Regression Model Baseline (COMMENT)
         # imputer = SimpleImputer(strategy='mean')
         # imputed_data_test = imputer.fit_transform(data_test.iloc[:, :-1])
         # pred_t = dtr.predict(imputed_data_test)  # Make prediction on target using unforeseen data
         # END LINEAR REGRESSION BASELINE
+        # print("rmse yet?")
+        # print("pred_t - data_test[feature_t]")
+        # print("feature_t: ", feature_t)
+        # print(pred_t.shape, data_test[feature_t].shape)
+        # print(data_test[feature_t])
+        # print()
+        # print(data_test)
         
-        RMSE = np.sqrt(np.mean((pred_t - data_test[feature_t]) ** 2))
+        # print(data_test.T.drop_duplicates().T[feature_t]) # This fails for some reason
+        
+        RMSE = np.sqrt(np.mean((pred_t - data_test.iloc[:, -1]) ** 2))
 
         # Compile testing dataset using data_t for cross-table RMSC
         cross_virus_col_sel = virus_col_sel # Viruses we specifically want to train on and use for predictions in predicting data
-        cross_sera_row_sel = np.random.choice(data_t.shape[0], int(data_t.shape[0] * f_sample), replace=True) # Randomly selected sera        data_test = data_assist_train.drop([data_assist_train.index[idx] for idx in sera_row_sel], axis=0)[np.append(virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
-        cross_data_test = data_t[np.append(cross_virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
         
+        cross_sera_row_sel = np.random.choice(data_t.shape[0], int(data_t.shape[0] * f_sample), replace=True) # Randomly selected sera        data_test = data_assist_train.drop([data_assist_train.index[idx] for idx in sera_row_sel], axis=0)[np.append(virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
+        # print(cross_sera_row_sel.shape, cross_sera_row_sel) # Might use this?
+        cross_data_test = data_t[np.append(cross_virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
+        # cross_data_test = cross_data_test.T.drop_duplicates().T # Drop duplicate columns
         # Decision Tree Regression  (UNCOMMENT)
         cross_col_mean_t = cross_data_test.apply(lambda x: x.mean(), axis=1)
         cross_data_test = cross_data_test - np.outer(np.ones(cross_data_test.shape[1]), cross_col_mean_t).T
@@ -180,7 +199,7 @@ def train_tree(target_table: "pd.DataFrame",
         # END LINEAR REGRESSION BASELINE
 
         # OKOKOK, we can only find cross_RMSE if target table actually contains target feature...
-        cross_RMSE = np.sqrt(np.mean((cross_pred_t - cross_data_test[feature_t]) ** 2)) 
+        cross_RMSE = np.sqrt(np.mean((cross_pred_t - cross_data_test.iloc[:, -1]) ** 2)) 
         if np.isnan(cross_RMSE):
             '''
             Problems with cross_data_test[feature_t]
@@ -315,6 +334,7 @@ def convert_raw_dtr_predictions(data, dtr_list):
 #     print(data_select)
     col_mean_t = data_select.apply(lambda x: x.mean(), axis=1)
     data_select = data_select - np.outer(np.ones(data_select.shape[1]), col_mean_t).T
+    # print(data_select)
     pred_t = dtr.predict(data_select.to_numpy()) # Make prediction on target using unforeseen data
     pred_t_uncentered = pred_t + col_mean_t
 
@@ -325,7 +345,7 @@ def convert_raw_dtr_predictions(data, dtr_list):
 
 def average_convert_raw_dtr_predictions(data, dtr_lists_list):
     HAI_predictions_list = []
-    for dtr_list in dtr_lists_list:
+    for dtr_list in dtr_lists_list: # Iterate over each regression model
         HAI_predictions, HAI_measurements, raw_predictions = convert_raw_dtr_predictions(data=data, dtr_list=dtr_list)
         HAI_predictions_list.append(HAI_predictions)
     
@@ -549,7 +569,7 @@ class transferability_comparisons():
     
     def plot_comparisons(self, save_to=None, **kwargs):
         table_names = list(self.HI_data_tables.antisera_table['groupID'].unique())
-        table_list = [self.HI_data_tables.select_HI_data_by_group(group=i, sort_by_year=True) for i in table_names]
+        table_list = [self.HI_data_tables.select_HI_data_by_group(group=[i], sort_by_year=True) for i in table_names]
         nrows, ncols = len(table_names), len(table_names)
         fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(100, 100))
 
@@ -655,7 +675,7 @@ class transferability_comparisons():
             comparison_combiner_dict[comparison_name] = dict()
             source_table, _, target_table = comparison_name.split(" ") # Find source and target tables of comparison
             for virus_idx, virus_name in enumerate(list(self.comparison_dict[comparison_name].keys())): # Choose target virus in comparison
-                data = self.HI_data_tables.select_HI_data_by_group(group=target_table)
+                data = self.HI_data_tables.select_HI_data_by_group(group=[target_table])
                 # Retrieve decision tree, ODR model, and predictions
                 dtr_lists_list = self.comparison_dict[comparison_name][virus_name] # Retrieve virus's decision tree data
                 df, odr_model, fitted_params, f_RMSE = self.comparison_virus_ODR_df_dict[comparison_name][virus_name] # Retrieve virus's ODR (perpendicularly fit line model)
@@ -680,11 +700,11 @@ class transferability_comparisons():
                 }
         self.comparison_combiner_dict = comparison_combiner_dict
 
-    def plot_comparisons_with_ODRs(self, save_to=None, **kwargs):
+    def plot_comparisons_with_ODRs(self, save_to=None, figsize=(100, 100), **kwargs):
         table_names = list(self.HI_data_tables.antisera_table['groupID'].unique())
         table_list = [self.HI_data_tables.select_HI_data_by_group(group=[i], sort_by_year=True) for i in table_names]
         nrows, ncols = len(table_names), len(table_names)
-        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(100, 100))
+        fig, axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize)
 
         for idx, source_table in enumerate(table_list):
             source_table_name = table_names[idx]
@@ -703,18 +723,18 @@ class transferability_comparisons():
                     axs[idx, jdx].plot(x_values, y_values, label=f"ODR Model", color='red')
                     
                     axs[idx, jdx].scatter(x,y, **kwargs)
-                    axs[idx, jdx].set_title(comparison_name, fontsize = 30)
+                    axs[idx, jdx].set_title(comparison_name, fontsize = 40)
                     axs[0,0].set_ylabel("Cross Table RMSE", fontsize = 30)
-                    axs[idx, jdx].tick_params(axis='both', which='major', labelsize=20)
+                    axs[idx, jdx].tick_params(axis='both', which='major', labelsize=30)
                     axs[idx, jdx].grid()
                     axs[idx, jdx].plot([0, 1], [0, 1], transform=axs[idx, jdx].transAxes, 
                                        label="Diagonal Line (y = x)", linestyle='dashed',
                                        color='green')
                     slope = fitted_params[0]
                     intercept = fitted_params[1]
-                    transferability = 1/(slope+f_RMSE)
-                    axs[idx, jdx].text(0.95, 0.05, f'slope: {slope}\nintercept: {intercept}\nf_RMSE: {f_RMSE}\ntransferability: {transferability:.2f}',
-                                       fontsize=30, color='red', ha='right', va='bottom')
+                    transferability = 1/(slope) # + f_RMSE
+                    axs[idx, jdx].text(0.95, 0.05, f'slope: {slope:.2f}\nintercept: {intercept:.2f}\nf_RMSE: {f_RMSE:.2f}\ntransferability: {transferability:.2f}',
+                                       fontsize=40, color='red', ha='right', va='bottom')
                     axs[idx, jdx].set_xlim([0, 1])
                     axs[idx, jdx].set_ylim([0, 1])
                 fig.suptitle("Cross VS Intra Table RMSE", fontsize=30)
