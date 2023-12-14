@@ -17,6 +17,8 @@ from sklearn.metrics import mean_squared_error
 import warnings
 warnings.filterwarnings('ignore')
 
+
+
 def train_tree(target_table: "pd.DataFrame",
                source_tables: "list(pd.DataFrame)",
                feature_t: "str",
@@ -779,3 +781,83 @@ class transferability_comparisons():
         plt.savefig("figs/"+ f"ODR Model: Train {train_trees}, Best {best_trees} trees: {comparison_name} Sample {sample_name.replace('/', '_')}")
         plt.show()
         return
+    
+    
+'''
+Prepare a source for predictions:
+- Identify a 2 datasets with good transferability
+- Choose source dataset
+- Train and cross validate a tree for every virus in source dataset, choosing 5 best trees per virus
+    - Feats and target both come from source
+    - Select viable virus features from viruses which overlap both datasets!
+- Now with a tree for every virus in Dataset 1
+    - Pull required feature viruses from Dataset 2 and make a prediction with the tree
+- Put the prediction thing above into a loop to see how well Dataset2 can be reconstructed
+'''
+
+'''
+Predictions:
+
+1.) Train comparison on datasets
+2.) Go to OBJ.comparison_dict  holds trees trained on source data that target other dataset's viruses
+3.) Go to OBJ.comparison_dict[COMPARISON] to access each target virus
+4.) Go to OBJ.comparison_dict[COMPARISON][VIRUS] to access each target virus's:
+    - regression model (IMPORTANT)
+    - intraRMSE
+    - crossRMSE
+    - feature viruses (IMPORTANT)
+    - predictions
+'''
+def predict_target(m_best_trees_trainer_lists, target_dataset):
+    '''
+    Assuming target_dataset contains data for each virus in virus_col_sel
+    
+    dtr: model
+    virus_col_sel: features to use for prediction
+    feature_t: virus to be predicted in target_dataset
+    '''
+    predictions_to_be_meaned = []
+    for l in m_best_trees_trainer_lists:
+        dtr, _, _, virus_col_sel, feature_t, _, _ = l
+        X = target_dataset[virus_col_sel]
+        col_mean = (X).apply(lambda x: x.mean(), axis=1)
+        centering_matrix =  np.outer(np.ones(X.shape[1]), col_mean).T
+        X_m_centered = X - centering_matrix # Center data
+        preds = dtr.predict(X_m_centered.to_numpy())
+        predictions_to_be_meaned.append(preds + col_mean) # Uncenter prediction
+    predictions_to_be_meaned = np.array(predictions_to_be_meaned)
+    return np.mean(predictions_to_be_meaned, axis=0) # Returns a list of prediction corresponding to each antibody sera in target_dataset
+
+def train_cross_dataset_model(source_table, target_table, n_feature = 7, f_sample=0.3, train_trees=50, best_trees=10):
+    '''
+    Returns a dict where "viable" viruses are keys and m_best_trees_trainer_lists are values
+    '''
+    source_table_feature_set = set(source_table.columns)
+    target_table_feature_set = set(target_table.columns)
+    intersection = list(source_table_feature_set.intersection(target_table_feature_set)) # Train trees on random samples from intersection
+    
+    m_best_trees_trainer_lists_per_target_virus = dict()
+    for feature_t in intersection:
+        selected_viruses_list = np.random.choice(intersection, n_feature) # Might need to tweak this step to consider depth of data...
+        source_table_trees = m_best_trees_trainer(target_table = source_table,
+                                                  source_tables = [source_table],
+                                                  feature_t = feature_t,
+                                                  selected_viruses_list= False,
+                                                  n_feature = n_feature,
+                                                  f_sample=f_sample,
+                                                  train_trees=train_trees,
+                                                  best_trees=best_trees)
+        m_best_trees_trainer_lists_per_target_virus[feature_t] = source_table_trees
+    return m_best_trees_trainer_lists_per_target_virus, intersection # intersection will tell you which virus to assign to your predictions
+
+def compute_predicted_df(m_best_trees_trainer_lists_per_target_virus, intersection, target_dataset):
+    
+    df = pd.DataFrame(np.nan, index=target_dataset.index, columns=target_dataset.columns)
+    
+    for key in m_best_trees_trainer_lists_per_target_virus:
+#         for sera in target_dataset.index:
+#             print()
+        m_best_trees_trainer_lists = m_best_trees_trainer_lists_per_target_virus[key]
+        df.loc[:, key] = predict_target(m_best_trees_trainer_lists, target_dataset)
+        
+    return df.dropna(axis=0, how='all')
