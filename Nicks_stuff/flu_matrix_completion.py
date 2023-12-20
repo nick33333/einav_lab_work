@@ -81,6 +81,7 @@ def train_tree(target_table: "pd.DataFrame",
     '''
 #     print(comparison_name)
     tree_dict = dict() # Will contain trained tree, cross-validation RMSE, and (truth, predictions) for cross validation 
+    invalid_table_count = 0 # Counts tables which had insufficient overlapping viruses with source table
     assert(isinstance(source_tables, list))
     for idx, train_table in enumerate(source_tables):
         # Renaming testing data (data_t) and training data (data_assist_train)
@@ -94,7 +95,9 @@ def train_tree(target_table: "pd.DataFrame",
             if feature_t in f_col_ind_train: # Exclude target feature virus
                 f_col_ind_train.remove(feature_t) # (2)
         else:
-            print(f"n_feature too large for assisting data {k}! Skipped to next data.")
+            invalid_table_count += 1
+            # print(f"n_feature too large for assisting data {k}! Skipped to next data.")
+            
 #         print(f'f_col_ind_train: {f_col_ind_train}')
         # WARNING: .get_loc method will return a list of bools instead of the expected index integer value if multiple instaces of col exist in data_t.columns
         f_tmp_ind = [data_t.columns.get_loc(col) for col in f_col_ind_train if col in data_t.columns] # (3*) Find indices of columns that intersect f_col_ind_train and data_t
@@ -103,7 +106,7 @@ def train_tree(target_table: "pd.DataFrame",
         f_feasible = [col for col in data_t.columns[f_tmp_ind] if data_t[col].count() > 2] # (3) Choose viruses that have more than 2 sera values in prediction data
         f_col_ind_train = [col for col in f_col_ind_train if col in f_feasible] # (4) Intersects cols from f_feasible and f_col_ind_train
         if len(f_feasible) < 2:
-            print(f"n_feature too large for assisting data {k}! Skipped to next data.")
+            # print(f"n_feature too large for assisting data {k}! Skipped to next data.")
             return
         data_assist_train = data_assist_train.dropna(subset=[feature_t]) # (5) Drops NAs in training data for target
 
