@@ -855,7 +855,7 @@ def train_cross_dataset_model(source_table, target_table, n_feature = 7, f_sampl
         source_table_trees = m_best_trees_trainer(target_table = source_table,
                                                   source_tables = [source_table],
                                                   feature_t = feature_t,
-                                                  selected_viruses_list= False,
+                                                  selected_viruses_list= selected_viruses_list,
                                                   n_feature = n_feature,
                                                   f_sample=f_sample,
                                                   train_trees=train_trees,
