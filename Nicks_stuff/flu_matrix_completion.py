@@ -458,6 +458,9 @@ class HI_data_tables():
         return selected_df
     
     def compute_virus_dates(self,):
+        '''
+        Regex the year out of the virus strain names and place them in a dataframe called virus_table (class attribute)
+        '''
         self.virus_table['virusID'] = list(self.HI_data.columns)
         # Extract the years using a regular expression
         self.virus_table['Year'] = [i.split('/')[-1] for i in self.virus_table['virusID']]
@@ -468,7 +471,14 @@ class HI_data_tables():
         self.virus_table['Year'] = self.virus_table['Year'].apply(lambda x: x + 1900 if (x <= 99 and x >= 68) else (x + 2000 if x <= 68 else x))
         return
     
-
+    def sort_by_virus_dates(self):
+        '''
+        Uses compute_virus_dates to sort columns (viruses) by their dates
+        '''
+        self.compute_virus_dates()
+        self.HI_data.columns = self.virus_table.sort_values(by='Year').virusID.tolist()
+        return
+        
     def data_counts(self):
         return self.antisera_table.groupby('groupID').size().reset_index(name='Count')
 
