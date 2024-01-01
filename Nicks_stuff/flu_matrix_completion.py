@@ -26,7 +26,8 @@ def train_tree(target_table: "pd.DataFrame",
                n_feature = 5,
                f_sample=0.3,
                k=1,
-               comparison_name=None):
+               comparison_name=None
+               replace=True):
     '''
     Function performs:
     - Data cleaning to ensure that viruses have sufficient sera data
@@ -188,7 +189,7 @@ def train_tree(target_table: "pd.DataFrame",
         # Compile testing dataset using data_t for cross-table RMSC
         cross_virus_col_sel = virus_col_sel # Viruses we specifically want to train on and use for predictions in predicting data
         
-        cross_sera_row_sel = np.random.choice(data_t.shape[0], int(data_t.shape[0] * f_sample), replace=True) # Randomly selected sera        data_test = data_assist_train.drop([data_assist_train.index[idx] for idx in sera_row_sel], axis=0)[np.append(virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
+        cross_sera_row_sel = np.random.choice(data_t.shape[0], int(data_t.shape[0] * f_sample), replace=replace) # Randomly selected sera        data_test = data_assist_train.drop([data_assist_train.index[idx] for idx in sera_row_sel], axis=0)[np.append(virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
         # print(cross_sera_row_sel.shape, cross_sera_row_sel) # Might use this?
         cross_data_test = data_t[np.append(cross_virus_col_sel, feature_t)] # Testing data subset covering virus_col_sel viruses and all sera not covered by training data 
         # cross_data_test = cross_data_test.T.drop_duplicates().T # Drop duplicate columns
@@ -227,7 +228,8 @@ def m_best_trees_trainer(target_table: "pd.DataFrame",
                          train_trees=10,
                          best_trees=5,
                          k=1,
-                         comparison_name=None):
+                         comparison_name=None,
+                         replace=True):
     '''
     This function will call the subroutine N number of times to generate N trees, from which the M best may be selected/returned
     Might also want to store a list of the target + training viruses for each tree made (might be like a bar code or signature)
@@ -244,7 +246,8 @@ def m_best_trees_trainer(target_table: "pd.DataFrame",
                                      n_feature = n_feature,
                                      f_sample = f_sample,
                                      k = k,
-                                     comparison_name=comparison_name)
+                                     comparison_name=comparison_name,
+                                     replace=replace)
         if train_tree_list is None:
 #             print("NONE???")
             return train_tree_list
@@ -823,6 +826,8 @@ Predictions:
 '''
 def predict_target(m_best_trees_trainer_lists, target_dataset):
     '''
+    Input: m_best_trees_trainer_lists (output of m_best_trees_trainer and/or train_cross_dataset_model) 
+           and target_dataset (same as target dataset given to m_best_trees_trainer)
     Assuming target_dataset contains data for each virus in virus_col_sel
     
     dtr: model
@@ -841,8 +846,18 @@ def predict_target(m_best_trees_trainer_lists, target_dataset):
     predictions_to_be_meaned = np.array(predictions_to_be_meaned)
     return np.mean(predictions_to_be_meaned, axis=0) # Returns a list of prediction corresponding to each antibody sera in target_dataset
 
-def train_cross_dataset_model(source_table, target_table, n_feature = 7, f_sample=0.3, train_trees=50, best_trees=10):
+def train_cross_dataset_model(source_table, target_table,
+                              n_feature = 7, f_sample=0.3, 
+                              train_trees=50, best_trees=10,
+                              replace=True):
     '''
+    Input: source_table (training data) and target_table (predictor data)
+
+    Function finds the viruses which overlap in both source_table and target_table and use
+    them as a set to bootstrap a selection of virus features from. A matrix completion ensemble model
+    is then trained on the source_table, target_table, and bootstrap selection of virus features.
+
+
     Returns a dict where "viable" viruses are keys and m_best_trees_trainer_lists are values
     '''
     source_table_feature_set = set(source_table.columns)
@@ -851,7 +866,9 @@ def train_cross_dataset_model(source_table, target_table, n_feature = 7, f_sampl
     
     m_best_trees_trainer_lists_per_target_virus = dict()
     for feature_t in intersection:
-        selected_viruses_list = np.random.choice(intersection, n_feature) # Might need to tweak this step to consider depth of data...
+        selected_viruses_list = np.random.choice(intersection, n_feature, replace=replace) # Might need to tweak this step to consider depth of data...
+        # Since I compute selected_viruses_list for m_best_trees_trainer, target_table can be source_table (doesn't do anything different if given an actual target table)
+        # The purpose of giving a target_table is so m_best_trees_trainer can compute selected_viruses_list
         source_table_trees = m_best_trees_trainer(target_table = source_table,
                                                   source_tables = [source_table],
                                                   feature_t = feature_t,
