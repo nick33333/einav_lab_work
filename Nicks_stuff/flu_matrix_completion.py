@@ -26,7 +26,7 @@ def train_tree(target_table: "pd.DataFrame",
                n_feature = 5,
                f_sample=0.3,
                k=1,
-               comparison_name=None
+               comparison_name=None,
                replace=True):
     '''
     Function performs:
@@ -129,12 +129,25 @@ def train_tree(target_table: "pd.DataFrame",
             return
         # Training step (and single cross validation):
 
-        if not isinstance(selected_viruses_list,bool): # If selected_viruses_list is not False, I'm assuming its just a list of virus names
-            virus_col_sel = selected_viruses_list # Viruses we specifically want to train on and use for predictions in predicting data
-        else:
+
+        if not isinstance(selected_viruses_list, bool): # If selected_viruses_list is not False, I'm assuming its just a list of virus names
+            assert(feature_t not in selected_viruses_list)
+            if n_feature > len(selected_viruses_list): # If selected_viruses_list has less viruses than the chosen number of viruses to use as features (n_features)
+                # print(f"Need to sample with replacement {n_feature} >= {len(selected_viruses_list)}: {selected_viruses_list}")
+                virus_col_sel = np.random.choice(selected_viruses_list, n_feature, replace=True)
+            else:
+                virus_col_sel = np.random.choice(selected_viruses_list, n_feature, replace=replace) # Viruses we specifically want to train on and use for predictions in predicting data
+            # virus_col_sel = selected_viruses_list # Viruses we specifically want to train on and use for predictions in predicting data
+ 
+        else: # If no selected_viruses_list is precomputed and given as input, compute it in the code below
             features_list = list(data_assist_train.columns) # Make sure feature_t isn't in features to train on
             features_list.remove(feature_t)
-            virus_col_sel = np.random.choice(f_feasible, n_feature, replace=True)
+            if n_feature > len(f_feasible): # If the number of feasible viruses to use as features is less than the chosen number of viruses to use as features (n_features)
+                virus_col_sel = np.random.choice(f_feasible, n_feature, replace=True)
+            else: # Otherwise, feel free to use replacement or no replacement when sampling
+                virus_col_sel = np.random.choice(f_feasible, n_feature, replace=replace)
+            # virus_col_sel = np.random.choice(f_feasible, n_feature, replace=True)
+
 
         sera_row_sel = np.random.choice(data_assist_train.shape[0], int(data_assist_train.shape[0] * f_sample), replace=True) # Randomly selected sera
         # We want to include the column of f_t_ind into our data_train
@@ -849,7 +862,8 @@ def predict_target(m_best_trees_trainer_lists, target_dataset):
 def train_cross_dataset_model(source_table, target_table,
                               n_feature = 7, f_sample=0.3, 
                               train_trees=50, best_trees=10,
-                              replace=True):
+                              replace=True,
+                              precompute_selected_viruses_list=True):
     '''
     Input: source_table (training data) and target_table (predictor data)
 
@@ -866,7 +880,20 @@ def train_cross_dataset_model(source_table, target_table,
     
     m_best_trees_trainer_lists_per_target_virus = dict()
     for feature_t in intersection:
-        selected_viruses_list = np.random.choice(intersection, n_feature, replace=replace) # Might need to tweak this step to consider depth of data...
+        intersection_without_target = [i for i in intersection if feature_t != i] # Ensures that target is not included in list of trainable features
+        if precompute_selected_viruses_list:
+            if n_feature > len(intersection): # If numbr of overlapping viruses is lower than chosen number of features to train on, sample with replacement
+                n_feature_diff = n_feature - len(intersection_without_target)
+                resampled_viruses = list(np.random.choice(intersection_without_target, n_feature_diff, replace=True))
+                # print(type(resampled_viruses), resampled_viruses)
+                intersection_without_target.extend(resampled_viruses)
+                selected_viruses_list = intersection_without_target
+            else:
+                selected_viruses_list = np.random.choice(intersection_without_target, n_feature, replace=replace) # Might need to tweak this step to consider depth of data...
+            # selected_viruses_list = intersection_without_target # Might need to tweak this step to consider depth of data...
+
+        else:
+            selected_viruses_list = False
         # Since I compute selected_viruses_list for m_best_trees_trainer, target_table can be source_table (doesn't do anything different if given an actual target table)
         # The purpose of giving a target_table is so m_best_trees_trainer can compute selected_viruses_list
         source_table_trees = m_best_trees_trainer(target_table = source_table,
