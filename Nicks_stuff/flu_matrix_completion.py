@@ -881,14 +881,14 @@ def train_cross_dataset_model(source_table, target_table,
     m_best_trees_trainer_lists_per_target_virus = dict()
     for feature_t in intersection:
         intersection_without_target = [i for i in intersection if feature_t != i] # Ensures that target is not included in list of trainable features
-        if precompute_selected_viruses_list:
-            if n_feature > len(intersection): # If numbr of overlapping viruses is lower than chosen number of features to train on, sample with replacement
+        if precompute_selected_viruses_list: # If you decide to precompute the selected_viruses_list
+            if n_feature > len(intersection_without_target): # If number of overlapping viruses is lower than chosen number of features to train on, sample with replacement
                 n_feature_diff = n_feature - len(intersection_without_target)
                 resampled_viruses = list(np.random.choice(intersection_without_target, n_feature_diff, replace=True))
                 # print(type(resampled_viruses), resampled_viruses)
                 intersection_without_target.extend(resampled_viruses)
                 selected_viruses_list = intersection_without_target
-            else:
+            else: # Otherwise if everyrhing is fin just randomly sample with/without replacement
                 selected_viruses_list = np.random.choice(intersection_without_target, n_feature, replace=replace) # Might need to tweak this step to consider depth of data...
             # selected_viruses_list = intersection_without_target # Might need to tweak this step to consider depth of data...
 
