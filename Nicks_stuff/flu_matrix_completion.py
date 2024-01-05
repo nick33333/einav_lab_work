@@ -17,7 +17,23 @@ from sklearn.metrics import mean_squared_error
 import warnings
 warnings.filterwarnings('ignore')
 
-
+def overlapping_features_criteria(source_table, target_table, min_fill = 0.2):
+    '''
+    Given two dataframes where columns are indexed by virus features, rows are indexed by sera names, and values are 
+    HAI binding scores, this function returns a list of overlapping features which surpass a given threshold 
+    corresponding to the upperbound of the fraction of non-NAN sera entries allowed for a "feasiible" virus feature
+    
+    Note: This function is equivalent to the method which Rong used for finding "feasible" virus features.
+    '''
+    intersection = list(set(source_table.columns).intersection(set(target_table.columns))) # Intersecting viruses between source and target tables
+    feasible_virus_features = list() # List will contain feasible virus features to train/make predictions on
+    for i in intersection: # Iterate over each potential feature virus in intersection
+        nan_tot = sum(source_table[intersection][i].isna()) # Count number of NAN antibody sera for a virus
+        tot = len(source_table[intersection][i]) # Total count of antibody sera for virus (NAN and not NAN)
+        fill_frac = 1 - nan_tot/tot # Fraction of sera which is not NAN
+        if fill_frac >= min_fill:
+            feasible_virus_features.append(i)
+    return feasible_virus_features
 
 def train_tree(target_table: "pd.DataFrame",
                source_tables: "list(pd.DataFrame)",
